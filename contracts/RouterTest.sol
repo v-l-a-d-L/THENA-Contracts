@@ -148,7 +148,7 @@ contract RouterSolo {
             (_reserveA,_reserveB,) = IPair(_pair).getReserves();
         }
         require(_reserveA > 0 && _reserveB > 0, 'ZERO_LIQUIDITY');
-        uint fee = IPairFactory(factory).getFee(stable) / 10000;
+        uint fee = (1 - IPairFactory(factory).getFee(stable) / 10000);
         (uint amountSwap, uint amountKeep) = _calculateSwapAmount(amountA, _reserveA, fee);
         uint amountGet = _reserveB - _reserveB * _reserveA / (_reserveA / amountSwap);
         require(amountGet > 0 && amountSwap > 0 && amountKeep > 0, 'INVALID_AMOUNT');
@@ -186,7 +186,7 @@ contract RouterSolo {
             (_reserveETH,_reserveB,) = IPair(_pair).getReserves();
         }
         require(_reserveETH > 0 && _reserveB > 0, 'ZERO_LIQUIDITY');
-        uint fee = IPairFactory(factory).getFee(stable) / 10000;
+        uint fee = (1 - IPairFactory(factory).getFee(stable) / 10000);
         (uint amountSwap, uint amountKeep) = _calculateSwapAmount(amountETH, _reserveETH, fee);
         uint amountGet = _reserveB - _reserveB * _reserveETH / (_reserveETH / amountSwap);
         require(amountGet > 0 && amountSwap > 0 && amountKeep > 0, 'INVALID_AMOUNT');
