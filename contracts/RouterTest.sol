@@ -31,12 +31,6 @@ interface IPairFactory {
     function getFee(bool _stable) external view returns(uint256);
 }
 
-interface IWETH {
-    function deposit() external payable;
-    function transfer(address to, uint value) external returns (bool);
-    function withdraw(uint) external;
-}
-
 interface IRouter {
     function pairFor(address tokenA, address tokenB, bool stable) external view returns (address pair);
 }
@@ -56,7 +50,6 @@ contract RouterSolo {
     using Math for uint;
 
     address public immutable factory;
-    IWETH public immutable wETH;
     uint internal constant MINIMUM_LIQUIDITY = 10**3;
     bytes32 immutable pairCodeHash;
 
@@ -65,10 +58,9 @@ contract RouterSolo {
         _;
     }
 
-    constructor(address _factory, address _wETH) {
+    constructor(address _factory) {
         factory = _factory;
         pairCodeHash = IPairFactory(_factory).pairCodeHash();
-        wETH = IWETH(_wETH);
     }
 
      function sortTokens(address tokenA, address tokenB) public pure returns (address token0, address token1) {
@@ -88,15 +80,16 @@ contract RouterSolo {
     }
 
     function _calculateSwapAmount(
-        uint amount, 
+        uint amountA, 
         uint reserveA,
         uint fee
-    ) internal pure returns(uint amountSwap, uint amountKeep){
-        uint _a = fee;
-        uint _b = reserveA*(1+fee);
-        uint _c = amount*reserveA;
-        amountSwap = (Math.sqrt(_b**2 + 4*_a*_c) - _b)/2*_a;
-        amountKeep = amount - amountSwap;
+    ) public pure returns(uint amountSwap, uint amountKeep){
+        uint _k = 10000;
+        uint _a = fee**2;
+        uint _b = reserveA*(_k+fee);
+        uint _c = reserveA*amountA;
+        amountSwap = (Math.sqrt((_b**2) + (4*_a*_c))*_k - _b*_k)/(_a*2);
+        amountKeep = amountA - amountSwap;
     }
 
     function addLiquitidyBySingleToken(
@@ -137,45 +130,6 @@ contract RouterSolo {
         IPair(_pair).swap(token0, token1, _pair, new bytes(0));
         liquidity = IPair(_pair).mint(msg.sender);
     }
-    
-    function addLiquitidyBySingleETH(
-        address tokenB,
-        bool stable,
-        uint amountETH,
-        uint deadline
-    ) payable external ensure(deadline) returns(uint liquidity){
-        address _pair = IPairFactory(factory).getPair(address(wETH), tokenB, stable);
-        require(_pair != address(0), 'PAIR_NOT_EXISTS');
-        uint _reserveETH;
-        uint _reserveB;
-        if(address(wETH) > tokenB){
-            (_reserveB,_reserveETH,) = IPair(_pair).getReserves();
-        }
-        else{
-            (_reserveETH,_reserveB,) = IPair(_pair).getReserves();
-        }
-        require(_reserveETH > 0 && _reserveB > 0, 'ZERO_LIQUIDITY');
-        uint fee = IPairFactory(factory).getFee(stable);
-        (uint amountSwap, uint amountKeep) = _calculateSwapAmount(amountETH, _reserveETH, fee);
-        uint amountGet = _reserveB - _reserveB * _reserveETH / (_reserveETH / amountSwap);
-        require(amountGet > 0 && amountSwap > 0 && amountKeep > 0, 'INVALID_AMOUNT');
-        liquidity = _addLiquitidyBySingleETH(_pair, tokenB, amountSwap, amountKeep, amountGet);
-    } 
-
-    function _addLiquitidyBySingleETH(
-        address _pair, 
-        address tokenB, 
-        uint amountSwap, 
-        uint amountKeep, 
-        uint amountGet
-    ) internal returns(uint liquidity){
-        (uint token0, uint token1) = address(wETH) > tokenB ? (amountGet, uint(0)) : (uint(0), amountGet);
-        wETH.deposit{value: amountKeep + amountSwap}();
-        assert(wETH.transfer(_pair, amountKeep + amountSwap));
-        if (msg.value > amountKeep + amountSwap) _safeTransferETH(msg.sender, msg.value - (amountKeep + amountSwap));
-        IPair(_pair).swap(token0, token1, _pair, new bytes(0));
-        liquidity = IPair(_pair).mint(msg.sender);
-    }
 
     function removeLiquidity(
         address tokenA,
@@ -194,42 +148,6 @@ contract RouterSolo {
         (amountA, amountB) = tokenA == token0 ? (amount0, amount1) : (amount1, amount0);
         require(amountA >= amountAMin, 'INSUFFICIENT_A_AMOUNT');
         require(amountB >= amountBMin, 'INSUFFICIENT_B_AMOUNT');
-    }
-
-    function removeLiquidityETH(
-        address token,
-        bool stable,
-        uint liquidity,
-        uint amountTokenMin,
-        uint amountETHMin,
-        address to,
-        uint deadline
-    ) public ensure(deadline) returns (uint amountToken, uint amountETH) {
-        (amountToken, amountETH) = removeLiquidity(
-            token,
-            address(wETH),
-            stable,
-            liquidity,
-            amountTokenMin,
-            amountETHMin,
-            address(this),
-            deadline
-        );
-        _safeTransfer(token, to, amountToken);
-        wETH.withdraw(amountETH);
-        _safeTransferETH(to, amountETH);
-    }
-
-    function _safeTransferETH(address to, uint value) internal {
-        (bool success,) = to.call{value:value}(new bytes(0));
-        require(success, 'TransferHelper: ETH_TRANSFER_FAILED');
-    }
-
-    function _safeTransfer(address token, address to, uint256 value) internal {
-        require(token.code.length > 0);
-        (bool success, bytes memory data) =
-        token.call(abi.encodeWithSelector(erc20.transfer.selector, to, value));
-        require(success && (data.length == 0 || abi.decode(data, (bool))));
     }
 
     function _safeTransferFrom(address token, address from, address to, uint256 value) internal {
