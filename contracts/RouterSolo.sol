@@ -1,56 +1,24 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-library Math {
-    function sqrt(uint y) internal pure returns (uint z) {
-        if (y > 3) {
-            z = y;
-            uint x = y / 2 + 1;
-            while (x < z) {
-                z = x;
-                x = (y / x + x) / 2;
-            }
-        } else if (y != 0) {
-            z = 1;
-        }
-    }
-}
+import "contracts/libraries/Math.sol";
+import "contracts/interfaces/IPair.sol";
+import "contracts/interfaces/IPairFactory.sol";
+import "contracts/interfaces/IRouter.sol";
 
-interface IPair {
-    function transferFrom(address src, address dst, uint amount) external returns (bool);
-    function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external;
-    function burn(address to) external returns (uint amount0, uint amount1);
-    function mint(address to) external returns (uint liquidity);
-    function getReserves() external view returns (uint _reserve0, uint _reserve1, uint _blockTimestampLast);
-}
-
-interface IPairFactory {
-    function pairCodeHash() external pure returns (bytes32);
-    function getPair(address tokenA, address token, bool stable) external view returns (address);
-    function createPair(address tokenA, address tokenB, bool stable) external returns (address pair);
+interface ISPairFactory is IPairFactory{
     function getFee(bool _stable) external view returns(uint256);
 }
 
-interface IRouter {
-    function pairFor(address tokenA, address tokenB, bool stable) external view returns (address pair);
-}
-
 interface erc20 {
-    function totalSupply() external view returns (uint256);
-    function transfer(address recipient, uint amount) external returns (bool);
-    function decimals() external view returns (uint8);
-    function symbol() external view returns (string memory);
-    function balanceOf(address) external view returns (uint);
     function transferFrom(address sender, address recipient, uint amount) external returns (bool);
-    function approve(address spender, uint value) external returns (bool);
 }
 
 contract RouterSolo {
-
+    
     using Math for uint;
 
     address public immutable factory;
-    uint internal constant MINIMUM_LIQUIDITY = 10**3;
     bytes32 immutable pairCodeHash;
 
     modifier ensure(uint deadline) {
@@ -60,16 +28,14 @@ contract RouterSolo {
 
     constructor(address _factory) {
         factory = _factory;
-        pairCodeHash = IPairFactory(_factory).pairCodeHash();
+        pairCodeHash = ISPairFactory(_factory).pairCodeHash();
     }
-
-     function sortTokens(address tokenA, address tokenB) public pure returns (address token0, address token1) {
-        require(tokenA != tokenB, 'IDENTICAL_ADDRESSES');
-        (token0, token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
-        require(token0 != address(0), 'ZERO_ADDRESS');
-    }
-
-    function pairFor(address tokenA, address tokenB, bool stable) public view returns (address pair) {
+    
+    function pairFor(
+        address tokenA, 
+        address tokenB, 
+        bool stable
+    ) public view returns (address pair) {
         (address token0, address token1) = sortTokens(tokenA, tokenB);
         pair = address(uint160(uint256(keccak256(abi.encodePacked(
             hex'ff',
@@ -79,17 +45,57 @@ contract RouterSolo {
         )))));
     }
 
-    function _calculateSwapAmount(
+     function sortTokens(address tokenA, address tokenB) public pure returns (address token0, address token1) {
+        require(tokenA != tokenB, 'IDENTICAL_ADDRESSES');
+        (token0, token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+        require(token0 != address(0), 'ZERO_ADDRESS');
+    }
+
+    function calculateSwapStable(
         uint amountA, 
-        uint reserveA,
-        uint fee
-    ) public pure returns(uint amountSwap, uint amountKeep){
-        uint _k = 10000;
-        uint _a = fee**2;
-        uint _b = reserveA*(_k+fee);
+        address tokenA,
+        address tokenB
+    ) public view returns(uint amountSwap, uint amountKeep, uint amountGet){
+        address _pair = IPairFactory(factory).getPair(tokenA, tokenB, true);
+        uint x = amountA / 2;
+        uint y = IPair(_pair).getAmountOut(x,tokenA);
+        uint alpha = amountA/3;
+        while(alpha > 0){
+            uint _x = x + alpha*(3*x*x*y + y*y*y);
+            if(_x > 0 && x < amountA){
+                y = IPair(_pair).getAmountOut(x,tokenA);
+                x = _x;
+            }
+            else{
+                alpha /= 2;
+            }
+        }
+        amountSwap = amountA - x;
+        amountKeep = x;
+        amountGet = y;
+    }
+
+    function calculateSwapValidated(
+        uint amountA, 
+        address tokenA,
+        address tokenB
+    ) public view returns(uint amountSwap, uint amountKeep, uint amountGet){
+        address _pair = ISPairFactory(factory).getPair(tokenA, tokenB, false);
+        uint reserveA;
+        uint reserveB;
+        if(tokenA > tokenB){
+            (reserveB,reserveA,) = IPair(_pair).getReserves();
+        }
+        else{
+            (reserveA,reserveB,) = IPair(_pair).getReserves();
+        }
+        uint fee = (1e4-ISPairFactory(factory).getFee(false));
+        uint _a = fee*fee;
+        uint _b = reserveA*(1e4+fee);
         uint _c = reserveA*amountA;
-        amountSwap = (Math.sqrt((_b**2) + (4*_a*_c))*_k - _b*_k)/(_a*2);
+        amountSwap = (Math.sqrt((_b * _b) + (4* _a * _c)) - _b) * 1e4 / (2* _a);
         amountKeep = amountA - amountSwap;
+        amountGet = reserveB*amountSwap * fee / (fee  * amountSwap + reserveA * 1e4);
     }
 
     function addLiquitidyBySingleToken(
@@ -99,22 +105,22 @@ contract RouterSolo {
         uint amountA,
         uint deadline
     ) external ensure(deadline) returns(uint liquidity){
-        address _pair = IPairFactory(factory).getPair(tokenA, tokenB, stable);
-        require(_pair != address(0), 'PAIR_NOT_EXISTS');
-        uint _reserveA;
-        uint _reserveB;
-        if(tokenA > tokenB){
-            (_reserveB,_reserveA,) = IPair(_pair).getReserves();
+        require(ISPairFactory(factory).getPair(tokenA, tokenB, stable) != address(0), 'PAIR_NOT_EXISTS');
+        {
+        (uint reserveB, uint reserveA,) = IPair(ISPairFactory(factory).getPair(tokenA, tokenB, stable)).getReserves();
+        require(reserveA > 0 && reserveB > 0, 'ZERO_LIQUIDITY');
         }
-        else{
-            (_reserveA,_reserveB,) = IPair(_pair).getReserves();
-        }
-        require(_reserveA > 0 && _reserveB > 0, 'ZERO_LIQUIDITY');
-        uint fee = IPairFactory(factory).getFee(stable);
-        (uint amountSwap, uint amountKeep) = _calculateSwapAmount(amountA, _reserveA, fee);
-        uint amountGet = _reserveB - _reserveB * _reserveA / (_reserveA / amountSwap);
+        (uint amountSwap, 
+        uint amountKeep, 
+        uint amountGet) = stable == true ? calculateSwapValidated(amountA, tokenA, tokenB) : calculateSwapValidated(amountA, tokenA, tokenB);
         require(amountGet > 0 && amountSwap > 0 && amountKeep > 0, 'INVALID_AMOUNT');
-        liquidity = _addLiquitidyBySingleToken(_pair, tokenA, tokenB,amountSwap, amountKeep, amountGet);
+        liquidity = _addLiquitidyBySingleToken(
+            ISPairFactory(factory).getPair(tokenA, tokenB, stable), 
+            tokenA, 
+            tokenB,
+            amountSwap, 
+            amountKeep, 
+            amountGet);
     } 
 
     function _addLiquitidyBySingleToken(
@@ -126,8 +132,9 @@ contract RouterSolo {
         uint amountGet
     ) internal returns(uint liquidity){
         (uint token0, uint token1) = tokenA > tokenB ? (amountGet, uint(0)) : (uint(0), amountGet);
-        _safeTransferFrom(tokenA, msg.sender, _pair, amountSwap + amountKeep);
+        _safeTransferFrom(tokenA, msg.sender, _pair, amountSwap);
         IPair(_pair).swap(token0, token1, _pair, new bytes(0));
+        _safeTransferFrom(tokenA, msg.sender, _pair, amountKeep);
         liquidity = IPair(_pair).mint(msg.sender);
     }
 
