@@ -76,7 +76,10 @@ contract RouterSolo {
         while(alpha > 0){
             (uint diff, bool s) = _diff(x, _pair, tokenA);
             uint _x = s==true ? alpha*(x + diff): alpha*(x - diff);
-            if(_x > 0 && x < amountA){
+            if(_x == x){
+                break;
+            }
+            if(_x > 0 && _x < amountA){
                 x = _x;
             }
             else{
