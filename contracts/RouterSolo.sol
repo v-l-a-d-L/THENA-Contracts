@@ -15,7 +15,7 @@ interface erc20 {
 }
 
 contract RouterSolo {
-    
+
     using Math for uint;
 
     address public immutable factory;
@@ -51,6 +51,20 @@ contract RouterSolo {
         require(token0 != address(0), 'ZERO_ADDRESS');
     }
 
+    function _diff(uint x, address _pair, address tokenA) internal  view returns(uint d, bool s){
+        uint y1 = IPair(_pair).getAmountOut(x-1,tokenA);
+        uint y2 = IPair(_pair).getAmountOut(x+1,tokenA);
+        uint diff1 = ((x+1)*(x+1)*(x+1)*y2 + (x+1)*y2*y2*y2);
+        uint diff2 = ((x-1)*(x-1)*(x-1)*y1 + (x-1)*y1*y1*y1);
+        if(diff1 > diff2){
+            d = (diff1 - diff2)/2;
+            s = true;
+        }
+        else{
+            d = (diff2 - diff1)/2;
+            s = false;
+        }
+    }
     function calculateSwapStable(
         uint amountA, 
         address tokenA,
@@ -58,12 +72,11 @@ contract RouterSolo {
     ) public view returns(uint amountSwap, uint amountKeep, uint amountGet){
         address _pair = IPairFactory(factory).getPair(tokenA, tokenB, true);
         uint x = amountA / 2;
-        uint y = IPair(_pair).getAmountOut(x,tokenA);
         uint alpha = amountA/3;
         while(alpha > 0){
-            uint _x = x + alpha*(3*x*x*y + y*y*y);
+            (uint diff, bool s) = _diff(x, _pair, tokenA);
+            uint _x = s==true ? alpha*(x + diff): alpha*(x - diff);
             if(_x > 0 && x < amountA){
-                y = IPair(_pair).getAmountOut(x,tokenA);
                 x = _x;
             }
             else{
@@ -72,7 +85,7 @@ contract RouterSolo {
         }
         amountSwap = amountA - x;
         amountKeep = x;
-        amountGet = y;
+        amountGet = IPair(_pair).getAmountOut(x,tokenA);
     }
 
     function calculateSwapValidated(
