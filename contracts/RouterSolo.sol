@@ -51,18 +51,20 @@ contract RouterSolo {
         require(token0 != address(0), 'ZERO_ADDRESS');
     }
 
-    function _diff(uint x, uint amount,address _pair, address tokenA) internal  view returns(uint d, bool s){
-        uint y1 = IPair(_pair).getAmountOut(amount - x + 1,tokenA);
-        uint y2 = IPair(_pair).getAmountOut(amount - x - 1,tokenA);
-        uint diff1 = ((x+1)*(x+1)*(x+1)*y2 + (x+1)*y2*y2*y2);
-        uint diff2 = ((x-1)*(x-1)*(x-1)*y1 + (x-1)*y1*y1*y1);
-        if(diff1 > diff2){
-            d = (diff1 - diff2)/2;
-            s = true;
+    function _directionToZero(uint x, uint amountA, address _pair, address tokenA) internal  view returns(bool direction){
+        uint reserveA;
+        uint reserveB;
+        if(tokenA == IPair(_pair).token0()){
+            (reserveA,reserveB,) = IPair(_pair).getReserves();
         }
         else{
-            d = (diff2 - diff1)/2;
-            s = false;
+            (reserveB,reserveA,) = IPair(_pair).getReserves();
+        }
+        if(IPair(_pair).getAmountOut(x,tokenA)*(reserveA+amountA)> reserveB*x){
+            direction = true;
+        }
+        else{
+            direction = false;
         }
     }
     function calculateSwapStable(
@@ -71,24 +73,28 @@ contract RouterSolo {
         address tokenB
     ) public view returns(uint amountSwap, uint amountKeep, uint amountGet){
         address _pair = IPairFactory(factory).getPair(tokenA, tokenB, true);
-        uint x = amountA / 2;
-        uint alpha = amountA/3;
+        uint alpha = amountA/2;
+        uint x = amountA/2;
+        bool direction = true;
         while(alpha > 0){
-            (uint diff, bool s) = _diff(x, amountA, _pair, tokenA);
-            uint _x = s==true ? x + alpha * diff : x - alpha * diff;
-            if(_x == x){ // if diff == 0
+            bool _d = _directionToZero(x,amountA, _pair, tokenA);
+            if(direction != _d) {
+                alpha/=2; direction = _d;
+            }
+            uint _x = direction == false? x - alpha: x + alpha;
+            if(_x == x){
                 break;
             }
             if(_x > 0 && _x < amountA){
                 x = _x;
             }
-            else{ // if new x is out of range, decrease step
-                alpha /= 2;
+            else{
+                alpha/=2;
             }
         }
         amountSwap = amountA - x;
         amountKeep = x;
-        amountGet = IPair(_pair).getAmountOut(x,tokenA);
+        amountGet = IPair(_pair).getAmountOut(amountSwap,tokenA);
     }
 
     function calculateSwapValidated(
