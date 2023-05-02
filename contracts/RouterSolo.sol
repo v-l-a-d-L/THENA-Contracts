@@ -75,14 +75,14 @@ contract RouterSolo {
         uint alpha = amountA/3;
         while(alpha > 0){
             (uint diff, bool s) = _diff(x, _pair, tokenA);
-            uint _x = s==true ? alpha*(x + diff): alpha*(x - diff);
-            if(_x == x){
+            uint _x = s==true ? x + alpha * diff : x - alpha * diff;
+            if(_x == x){ // if diff == 0
                 break;
             }
             if(_x > 0 && _x < amountA){
                 x = _x;
             }
-            else{
+            else{ // if new x is out of range, decrease step
                 alpha /= 2;
             }
         }
