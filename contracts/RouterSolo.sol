@@ -51,9 +51,9 @@ contract RouterSolo {
         require(token0 != address(0), 'ZERO_ADDRESS');
     }
 
-    function _diff(uint x, address _pair, address tokenA) internal  view returns(uint d, bool s){
-        uint y1 = IPair(_pair).getAmountOut(x-1,tokenA);
-        uint y2 = IPair(_pair).getAmountOut(x+1,tokenA);
+    function _diff(uint x, uint amount,address _pair, address tokenA) internal  view returns(uint d, bool s){
+        uint y1 = IPair(_pair).getAmountOut(amount - x + 1,tokenA);
+        uint y2 = IPair(_pair).getAmountOut(amount - x - 1,tokenA);
         uint diff1 = ((x+1)*(x+1)*(x+1)*y2 + (x+1)*y2*y2*y2);
         uint diff2 = ((x-1)*(x-1)*(x-1)*y1 + (x-1)*y1*y1*y1);
         if(diff1 > diff2){
@@ -74,7 +74,7 @@ contract RouterSolo {
         uint x = amountA / 2;
         uint alpha = amountA/3;
         while(alpha > 0){
-            (uint diff, bool s) = _diff(x, _pair, tokenA);
+            (uint diff, bool s) = _diff(x, amountA, _pair, tokenA);
             uint _x = s==true ? x + alpha * diff : x - alpha * diff;
             if(_x == x){ // if diff == 0
                 break;
