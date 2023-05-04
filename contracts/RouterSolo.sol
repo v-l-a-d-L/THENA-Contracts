@@ -79,7 +79,8 @@ contract RouterSolo {
         while(alpha > 0){
             bool _d = _directionToZero(x,amountA, _pair, tokenA);
             if(direction != _d) {
-                alpha/=2; direction = _d;
+                alpha/=2; 
+                direction = _d;
             }
             uint _x = direction == false? x - alpha: x + alpha;
             if(_x == x){
